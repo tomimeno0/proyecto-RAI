@@ -2,6 +2,9 @@ import keyboard  # pip install keyboard
 import threading
 import speech_recognition as sr
 from inputimeout import inputimeout, TimeoutOccurred
+import requests
+
+SERVER_URL = "http://127.0.0.1:5000/orden"
 
 rai_activo = False
 rai_thread = None
@@ -15,7 +18,7 @@ def rai_loop():
         try:
             modo = inputimeout(prompt="📥 ¿Usar voz (v) o texto (t)? (ALT+G para apagar) > ", timeout=10).lower()
         except TimeoutOccurred:
-            # Cada 5 segundos checa si sigue activo
+            # Cada 10 segundos checa si sigue activo
             if not rai_activo:
                 break
             else:
@@ -53,6 +56,17 @@ def rai_loop():
             continue
 
         print(f"📦 Comando capturado: {comando}")
+
+        # Enviar la orden al servidor
+        try:
+            response = requests.post(SERVER_URL, json={"orden": comando})
+            if response.status_code == 200:
+                data = response.json()
+                print(f"🧾 Respuesta del servidor: {data.get('respuesta')}")
+            else:
+                print(f"❌ Error del servidor: {response.status_code}")
+        except Exception as e:
+            print(f"❌ No se pudo conectar con el servidor: {e}")
 
     print("🔌 RAI DESACTIVADO")
 
