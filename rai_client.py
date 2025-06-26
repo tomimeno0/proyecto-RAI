@@ -15,6 +15,8 @@ fs = 16000
 audio_data = []
 audio_file = "temp_audio.wav"
 
+texto_acumulado = ""
+
 SERVER_URL = "http://127.0.0.1:5000/orden"
 
 def ejecutar_comando_cmd(comando):
@@ -45,6 +47,7 @@ def grabar_audio():
             sd.sleep(100)
 
 def detener_y_procesar():
+    global texto_acumulado
     print("⏹️ Audio capturado, procesando...")
     if not audio_data:
         print("⚠️ No se grabó nada.")
@@ -60,28 +63,50 @@ def detener_y_procesar():
 
     try:
         texto = r.recognize_google(audio, language="es-AR")
-        print(f'📦 Texto capturado: "{texto}"')
-        texto_editado = prompt("✍️ Revisá o modificá el comando (ENTER para confirmar):\n", default=texto).strip()
-        if not texto_editado:
-            texto_editado = texto
+        print(f'🧩 Fragmento capturado: "{texto}"')
 
-        try:
-            response = requests.post(SERVER_URL, json={"command": texto_editado})
-            if response.ok:
-                respuesta_servidor = response.json().get("response", "")
-                print(f"🧠 Respuesta del servidor: {respuesta_servidor}")
-                ejecutar_comando_cmd(respuesta_servidor)
-            else:
-                print(f"❌ Error en servidor: {response.status_code}")
-        except Exception as e:
-            print(f"❌ Error comunicando con servidor: {e}")
+        texto_acumulado += " " + texto
+        texto_acumulado = texto_acumulado.strip()
+
+        print(f'📦 Mensaje acumulado: "{texto_acumulado}"')
 
     except sr.UnknownValueError:
-        print("🤷‍♂️ No entendí lo que dijiste.")
+        print("🤷‍♂️ No entendí lo que dijiste. Podés seguir editando el mensaje acumulado.")
+
     except sr.RequestError as e:
         print(f"❌ Error de reconocimiento: {e}")
 
     os.remove(audio_file)
+
+    # Justo después de procesar el audio, mostrar el prompt para editar y enviar
+    enviar_mensaje_final()
+
+def enviar_mensaje_final():
+    global texto_acumulado
+    if not texto_acumulado:
+        print("⚠️ No hay texto para enviar.")
+        return
+
+    texto_editado = prompt("✍️ Revisá o modificá el comando (ENTER para confirmar):\n", default=texto_acumulado).strip()
+    texto_acumulado = texto_editado
+
+    if not texto_acumulado:
+        print("⚠️ No se envió ningún comando porque el texto está vacío.")
+        return
+
+    try:
+        response = requests.post(SERVER_URL, json={"command": texto_acumulado})
+        if response.ok:
+            respuesta_servidor = response.json().get("response", "")
+            print(f"🧠 Respuesta del servidor: {respuesta_servidor}")
+            ejecutar_comando_cmd(respuesta_servidor)
+        else:
+            print(f"❌ Error en servidor: {response.status_code}")
+    except Exception as e:
+        print(f"❌ Error comunicando con servidor: {e}")
+
+    # Limpiar el texto acumulado después de enviar
+    texto_acumulado = ""
 
 def al_presionar_v(e):
     global grabando
