@@ -6,15 +6,16 @@ import speech_recognition as sr
 import threading
 import os
 import requests
-import subprocess  # <-- importamos subprocess para ejecutar comandos
+import subprocess
+from prompt_toolkit import prompt
 
 rai_activado = False
 grabando = False
-fs = 16000  # Frecuencia de muestreo
+fs = 16000
 audio_data = []
 audio_file = "temp_audio.wav"
 
-SERVER_URL = "http://127.0.0.1:5000/orden"  # Asegurate que la URL coincida con la del servidor
+SERVER_URL = "http://127.0.0.1:5000/orden"
 
 def ejecutar_comando_cmd(comando):
     try:
@@ -59,18 +60,17 @@ def detener_y_procesar():
 
     try:
         texto = r.recognize_google(audio, language="es-AR")
-        print(f"📦 Comando capturado: {texto}")
+        print(f'📦 Texto capturado: "{texto}"')
+        texto_editado = prompt("✍️ Revisá o modificá el comando (ENTER para confirmar):\n", default=texto).strip()
+        if not texto_editado:
+            texto_editado = texto
 
-        # Enviar el texto al servidor
         try:
-            response = requests.post(SERVER_URL, json={"command": texto})
+            response = requests.post(SERVER_URL, json={"command": texto_editado})
             if response.ok:
                 respuesta_servidor = response.json().get("response", "")
                 print(f"🧠 Respuesta del servidor: {respuesta_servidor}")
-
-                # Ejecutar el comando CMD que devuelve el servidor
                 ejecutar_comando_cmd(respuesta_servidor)
-
             else:
                 print(f"❌ Error en servidor: {response.status_code}")
         except Exception as e:
