@@ -1,89 +1,113 @@
-import keyboard  # pip install keyboard
-import threading
+import keyboard
+import sounddevice as sd
+import numpy as np
+import scipy.io.wavfile as wavfile
 import speech_recognition as sr
-from inputimeout import inputimeout, TimeoutOccurred
+import threading
+import os
 import requests
+import subprocess  # <-- importamos subprocess para ejecutar comandos
 
-SERVER_URL = "http://127.0.0.1:5000/orden"
+rai_activado = False
+grabando = False
+fs = 16000  # Frecuencia de muestreo
+audio_data = []
+audio_file = "temp_audio.wav"
 
-rai_activo = False
-rai_thread = None
+SERVER_URL = "http://127.0.0.1:5000/orden"  # Asegurate que la URL coincida con la del servidor
 
-def rai_loop():
-    global rai_activo
-
-    print("🔹 RAI ACTIVADO")
-
-    while rai_activo:
-        try:
-            modo = inputimeout(prompt="📥 ¿Usar voz (v) o texto (t)? (ALT+G para apagar) > ", timeout=10).lower()
-        except TimeoutOccurred:
-            # Cada 10 segundos checa si sigue activo
-            if not rai_activo:
-                break
-            else:
-                continue
-
-        if not rai_activo:
-            break
-
-        if modo == "t":
-            try:
-                comando = inputimeout(prompt="🧠 Ingresá tu orden: ", timeout=10)
-            except TimeoutOccurred:
-                print("⌛ Tiempo de espera agotado. Volviendo a preguntar...")
-                continue
-            if not rai_activo:
-                break
-        elif modo == "v":
-            try:
-                r = sr.Recognizer()
-                with sr.Microphone() as source:
-                    print("🎤 Escuchando...")
-                    audio = r.listen(source, timeout=5, phrase_time_limit=5)
-                comando = r.recognize_google(audio, language="es-AR")
-            except sr.UnknownValueError:
-                print("🤷‍♂️ No entendí lo que dijiste.")
-                continue
-            except sr.RequestError as e:
-                print(f"❌ Error con el servicio de voz: {e}")
-                continue
-            except sr.WaitTimeoutError:
-                print("⌛ No se detectó audio.")
-                continue
+def ejecutar_comando_cmd(comando):
+    try:
+        resultado = subprocess.run(comando, shell=True, capture_output=True, text=True)
+        if resultado.returncode == 0:
+            print("✅ Comando ejecutado con éxito")
+            if resultado.stdout.strip():
+                print("Salida:\n", resultado.stdout)
         else:
-            print("❌ Modo no reconocido.")
-            continue
+            print("❌ Error al ejecutar comando")
+            if resultado.stderr.strip():
+                print("Error:\n", resultado.stderr)
+    except Exception as e:
+        print(f"⚠️ Error ejecutando comando: {e}")
 
-        print(f"📦 Comando capturado: {comando}")
+def grabar_audio():
+    global audio_data, grabando
+    audio_data = []
+    print("🎤 Grabando audio...")
 
-        # Enviar la orden al servidor
+    def callback(indata, frames, time_info, status):
+        if grabando:
+            audio_data.append(indata.copy())
+
+    with sd.InputStream(samplerate=fs, channels=1, callback=callback):
+        while grabando:
+            sd.sleep(100)
+
+def detener_y_procesar():
+    print("⏹️ Audio capturado, procesando...")
+    if not audio_data:
+        print("⚠️ No se grabó nada.")
+        return
+
+    audio_np = np.concatenate(audio_data, axis=0)
+    audio_int16 = (audio_np * 32767).astype(np.int16)
+    wavfile.write(audio_file, fs, audio_int16)
+
+    r = sr.Recognizer()
+    with sr.AudioFile(audio_file) as source:
+        audio = r.record(source)
+
+    try:
+        texto = r.recognize_google(audio, language="es-AR")
+        print(f"📦 Comando capturado: {texto}")
+
+        # Enviar el texto al servidor
         try:
-            response = requests.post(SERVER_URL, json={"orden": comando})
-            if response.status_code == 200:
-                data = response.json()
-                print(f"🧾 Respuesta del servidor: {data.get('respuesta')}")
-            else:
-                print(f"❌ Error del servidor: {response.status_code}")
-        except Exception as e:
-            print(f"❌ No se pudo conectar con el servidor: {e}")
+            response = requests.post(SERVER_URL, json={"command": texto})
+            if response.ok:
+                respuesta_servidor = response.json().get("response", "")
+                print(f"🧠 Respuesta del servidor: {respuesta_servidor}")
 
-    print("🔌 RAI DESACTIVADO")
+                # Ejecutar el comando CMD que devuelve el servidor
+                ejecutar_comando_cmd(respuesta_servidor)
+
+            else:
+                print(f"❌ Error en servidor: {response.status_code}")
+        except Exception as e:
+            print(f"❌ Error comunicando con servidor: {e}")
+
+    except sr.UnknownValueError:
+        print("🤷‍♂️ No entendí lo que dijiste.")
+    except sr.RequestError as e:
+        print(f"❌ Error de reconocimiento: {e}")
+
+    os.remove(audio_file)
+
+def al_presionar_v(e):
+    global grabando
+    if rai_activado and not grabando:
+        grabando = True
+        threading.Thread(target=grabar_audio).start()
+
+def al_soltar_v(e):
+    global grabando
+    if rai_activado and grabando:
+        grabando = False
+        threading.Thread(target=detener_y_procesar).start()
 
 def toggle_rai():
-    global rai_activo, rai_thread
-
-    if not rai_activo:
-        rai_activo = True
-        rai_thread = threading.Thread(target=rai_loop, daemon=True)
-        rai_thread.start()
+    global rai_activado
+    rai_activado = not rai_activado
+    if rai_activado:
+        print("🔹 RAI ACTIVADO (mantené 'V' para hablar)")
     else:
-        print("\n⛔ Apagando RAI...")
-        rai_activo = False
+        print("🔌 RAI DESACTIVADO")
 
 def main():
     print("🕶️ Esperando activación con ALT+G (toggle on/off)")
     keyboard.add_hotkey('alt+g', toggle_rai)
+    keyboard.on_press_key('v', al_presionar_v)
+    keyboard.on_release_key('v', al_soltar_v)
     keyboard.wait()
 
 if __name__ == "__main__":

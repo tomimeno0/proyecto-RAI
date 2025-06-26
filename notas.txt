@@ -1,0 +1,33 @@
+from flask import Flask, request, jsonify
+import openai
+
+app = Flask(__name__)
+
+# ✅ Creamos cliente con la API Key
+client = openai.OpenAI(api_key="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")
+
+@app.route('/orden', methods=['POST'])
+def procesar_orden():
+    data = request.get_json()
+    orden = data.get('command')  # 🔧 Cambiado para que coincida con el cliente
+    print(f"📥 Orden recibida: {orden}")
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "Sos una IA útil y amable, respondé con claridad."},
+                {"role": "user", "content": orden}
+            ],
+            max_tokens=150,
+            temperature=0.7,
+        )
+        respuesta_ia = response.choices[0].message.content.strip()
+
+    except Exception as e:
+        respuesta_ia = f"Error en IA: {e}"
+
+    return jsonify({"response": respuesta_ia})
+
+if __name__ == '__main__':
+    app.run(host='127.0.0.1', port=5000, debug=True)
