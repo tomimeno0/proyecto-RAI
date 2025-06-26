@@ -72,13 +72,11 @@ def detener_y_procesar():
 
     except sr.UnknownValueError:
         print("🤷‍♂️ No entendí lo que dijiste. Podés seguir editando el mensaje acumulado.")
-
     except sr.RequestError as e:
         print(f"❌ Error de reconocimiento: {e}")
 
     os.remove(audio_file)
 
-    # Justo después de procesar el audio, mostrar el prompt para editar y enviar
     enviar_mensaje_final()
 
 def enviar_mensaje_final():
@@ -105,34 +103,32 @@ def enviar_mensaje_final():
     except Exception as e:
         print(f"❌ Error comunicando con servidor: {e}")
 
-    # Limpiar el texto acumulado después de enviar
     texto_acumulado = ""
 
-def al_presionar_v(e):
+def monitor_alt_v():
     global grabando
-    if rai_activado and not grabando:
-        grabando = True
-        threading.Thread(target=grabar_audio).start()
-
-def al_soltar_v(e):
-    global grabando
-    if rai_activado and grabando:
-        grabando = False
-        threading.Thread(target=detener_y_procesar).start()
+    while True:
+        if rai_activado and keyboard.is_pressed('alt') and keyboard.is_pressed('v'):
+            if not grabando:
+                grabando = True
+                threading.Thread(target=grabar_audio).start()
+        elif grabando:
+            grabando = False
+            threading.Thread(target=detener_y_procesar).start()
+        sd.sleep(100)
 
 def toggle_rai():
     global rai_activado
     rai_activado = not rai_activado
     if rai_activado:
-        print("🔹 RAI ACTIVADO (mantené 'V' para hablar)")
+        print("🔹 RAI ACTIVADO (mantené ALT+V para hablar)")
     else:
         print("🔌 RAI DESACTIVADO")
 
 def main():
     print("🕶️ Esperando activación con ALT+G (toggle on/off)")
     keyboard.add_hotkey('alt+g', toggle_rai)
-    keyboard.on_press_key('v', al_presionar_v, suppress=True)
-    keyboard.on_release_key('v', al_soltar_v, suppress=True)
+    threading.Thread(target=monitor_alt_v, daemon=True).start()
     keyboard.wait()
 
 if __name__ == "__main__":
