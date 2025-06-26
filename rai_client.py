@@ -1,7 +1,4 @@
 import keyboard
-import sounddevice as sd
-import numpy as np
-import scipy.io.wavfile as wavfile
 import speech_recognition as sr
 import threading
 import os
@@ -9,14 +6,7 @@ import requests
 import subprocess
 from prompt_toolkit import prompt
 
-rai_activado = False
-grabando = False
-fs = 16000
-audio_data = []
-audio_file = "temp_audio.wav"
-
 texto_acumulado = ""
-
 SERVER_URL = "http://127.0.0.1:5000/orden"
 
 def ejecutar_comando_cmd(comando):
@@ -33,49 +23,30 @@ def ejecutar_comando_cmd(comando):
     except Exception as e:
         print(f"⚠️ Error ejecutando comando: {e}")
 
-def grabar_audio():
-    global audio_data, grabando
-    audio_data = []
-    print("🎤 Grabando audio...")
-
-    def callback(indata, frames, time_info, status):
-        if grabando:
-            audio_data.append(indata.copy())
-
-    with sd.InputStream(samplerate=fs, channels=1, callback=callback):
-        while grabando:
-            sd.sleep(100)
-
-def detener_y_procesar():
+def grabar_y_procesar_orden():
     global texto_acumulado
-    print("⏹️ Audio capturado, procesando...")
-    if not audio_data:
-        print("⚠️ No se grabó nada.")
-        return
+    recognizer = sr.Recognizer()
+    mic = sr.Microphone()
 
-    audio_np = np.concatenate(audio_data, axis=0)
-    audio_int16 = (audio_np * 32767).astype(np.int16)
-    wavfile.write(audio_file, fs, audio_int16)
+    with mic as source:
+        print("🎤 Escuchando tu orden (hablá)...")
+        recognizer.adjust_for_ambient_noise(source, duration=0.5)
+        audio = recognizer.listen(source, timeout=None)
 
-    r = sr.Recognizer()
-    with sr.AudioFile(audio_file) as source:
-        audio = r.record(source)
+    print("⏹️ Procesando orden...")
 
     try:
-        texto = r.recognize_google(audio, language="es-AR")
+        texto = recognizer.recognize_google(audio, language="es-AR")
         print(f'🧩 Fragmento capturado: "{texto}"')
-
         texto_acumulado += " " + texto
         texto_acumulado = texto_acumulado.strip()
-
         print(f'📦 Mensaje acumulado: "{texto_acumulado}"')
-
     except sr.UnknownValueError:
-        print("🤷‍♂️ No entendí lo que dijiste. Podés seguir editando el mensaje acumulado.")
+        print("🤷‍♂️ No entendí lo que dijiste.")
+        return
     except sr.RequestError as e:
         print(f"❌ Error de reconocimiento: {e}")
-
-    os.remove(audio_file)
+        return
 
     enviar_mensaje_final()
 
@@ -105,30 +76,27 @@ def enviar_mensaje_final():
 
     texto_acumulado = ""
 
-def monitor_alt_v():
-    global grabando
-    while True:
-        if rai_activado and keyboard.is_pressed('alt') and keyboard.is_pressed('v'):
-            if not grabando:
-                grabando = True
-                threading.Thread(target=grabar_audio).start()
-        elif grabando:
-            grabando = False
-            threading.Thread(target=detener_y_procesar).start()
-        sd.sleep(100)
+def escucha_hotword():
+    r = sr.Recognizer()
+    with sr.Microphone() as source:
+        print("👂 Decí 'okey rey' para dar una orden...")
 
-def toggle_rai():
-    global rai_activado
-    rai_activado = not rai_activado
-    if rai_activado:
-        print("🔹 RAI ACTIVADO (mantené ALT+V para hablar)")
-    else:
-        print("🔌 RAI DESACTIVADO")
+        while True:
+            try:
+                audio = r.listen(source, phrase_time_limit=2)
+                texto = r.recognize_google(audio, language="es-AR").lower()
+                print(f"🗣️ Escuchado: {texto}")
+                if "okey rey" in texto or "okay rey" in texto:
+                    print("🎯 Hotword detectada → escuchando orden...")
+                    grabar_y_procesar_orden()
+            except sr.UnknownValueError:
+                continue
+            except sr.RequestError as e:
+                print(f"❌ Error con el reconocimiento de voz: {e}")
 
 def main():
-    print("🕶️ Esperando activación con ALT+G (toggle on/off)")
-    keyboard.add_hotkey('alt+g', toggle_rai)
-    threading.Thread(target=monitor_alt_v, daemon=True).start()
+    print("🕶️ Decí 'okey rey' para activar y dar una orden.")
+    threading.Thread(target=escucha_hotword, daemon=True).start()
     keyboard.wait()
 
 if __name__ == "__main__":
