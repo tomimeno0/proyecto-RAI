@@ -106,8 +106,8 @@ def toggle_rai():
 def main():
     print("🕶️ Esperando activación con ALT+G (toggle on/off)")
     keyboard.add_hotkey('alt+g', toggle_rai)
-    keyboard.on_press_key('v', al_presionar_v)
-    keyboard.on_release_key('v', al_soltar_v)
+    keyboard.on_press_key('v', al_presionar_v, suppress=True)
+    keyboard.on_release_key('v', al_soltar_v, suppress=True)
     keyboard.wait()
 
 if __name__ == "__main__":
