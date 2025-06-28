@@ -8,10 +8,33 @@ from prompt_toolkit import prompt
 import pygetwindow as gw
 import pyautogui
 import psutil
+import re
 
 usuario = os.getlogin()
 texto_acumulado = ""
 SERVER_URL = "http://127.0.0.1:5000/orden"
+
+def procesar_emocion_y_puntuacion(texto):
+    texto = texto.strip()
+
+    if texto.endswith(("que", "qué", "como", "cómo", "donde", "dónde", "cuando", "cuándo", "por qué", "porque")) or texto.lower().startswith(("qué ", "cómo ", "cuándo ", "dónde ", "por qué ")):
+        texto = texto[0].upper() + texto[1:] + "?"
+        return texto
+
+    emocion = ["dale", "vamos", "sí", "listo", "buenísimo", "perfecto", "increíble", "genial", "me encanta", "de una"]
+    for palabra in emocion:
+        if re.search(rf"\b{palabra}\b", texto.lower()):
+            texto = texto[0].upper() + texto[1:] + "!"
+            return texto
+
+    texto = re.sub(r"\b(osea|oseas|eh|emm|mm+)\b", "", texto, flags=re.IGNORECASE)
+    texto = re.sub(r"\s{2,}", " ", texto).strip()
+
+    texto = texto[0].upper() + texto[1:]
+    if not texto.endswith((".", "!", "?")):
+        texto += "."
+
+    return texto
 
 def ejecutar_accion_ventana(accion, nombre_ventana):
     try:
@@ -163,6 +186,7 @@ def grabar_y_procesar_orden():
 
     try:
         texto = recognizer.recognize_google(audio, language="es-AR")
+        texto = procesar_emocion_y_puntuacion(texto)
         print(f'🧩 Fragmento capturado: "{texto}"')
         texto_acumulado += " " + texto
         texto_acumulado = texto_acumulado.strip()
@@ -186,7 +210,7 @@ def escucha_hotword():
                 audio = r.listen(source, phrase_time_limit=2)
                 texto = r.recognize_google(audio, language="es-AR").lower()
                 print(f"🗣️ Escuchado: {texto}")
-                if "okey rey" in texto or "okay rey" in texto or "okey ray" in texto or "okay ray" in texto or "ok ray" in texto or "ok rey" in texto or "okey real" in texto or "okay re" in texto or "ok israel" in texto or "okay israel" in texto or "ok rail" in texto or "okay r" in texto or "okay rail" in texto or "hey ray" in texto or "hey rey" in texto or "hey re" in texto or "hey real" in texto or "hey israel" in texto:
+                if "okey rey" in texto or "okay rey" in texto or "okey ray" in texto or "okay ray" in texto or "ok ray" in texto or "ok rey" in texto or "okey real" in texto or "okay re" in texto or "ok israel" in texto or "okay israel" in texto or "ok rail" in texto or "okay r" in texto or "okay rail" in texto or "hey ray" in texto or "hey rey" in texto or "hey re" in texto or "hey real" in texto or "hey israel" in texto or "hola rey" in texto:
                     print("🧠 Hola, soy RAI. ¿Cómo puedo ayudarte?")
                     grabar_y_procesar_orden()
             except sr.UnknownValueError:
