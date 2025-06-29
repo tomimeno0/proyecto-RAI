@@ -9,10 +9,56 @@ import pygetwindow as gw
 import pyautogui
 import psutil
 import re
+import time
 
 usuario = os.getlogin()
 texto_acumulado = ""
 SERVER_URL = "http://127.0.0.1:5000/orden"
+
+def escaner_inteligente(tipo):
+    try:
+        if tipo == "ram":
+            procesos = sorted(psutil.process_iter(['pid', 'name', 'memory_info']), key=lambda p: p.info['memory_info'].rss, reverse=True)
+            print("🧠 Procesos con mayor uso de RAM:")
+            for proc in procesos[:10]:
+                print(f" - {proc.info['name']} (PID: {proc.info['pid']}) - {proc.info['memory_info'].rss / (1024*1024):.2f} MB")
+
+        elif tipo == "cpu":
+            procesos = sorted(psutil.process_iter(['pid', 'name', 'cpu_percent']), key=lambda p: p.info['cpu_percent'], reverse=True)
+            print("🔥 Procesos con más uso de CPU:")
+            for proc in procesos[:10]:
+                print(f" - {proc.info['name']} (PID: {proc.info['pid']}) - {proc.info['cpu_percent']}%")
+
+        elif tipo.startswith("disco"):
+            letra = "TODOS"
+            partes = tipo.split(":")
+            if len(partes) == 2:
+                letra = partes[1].upper()
+
+            print("💽 Estado del disco:")
+            if letra == "TODOS":
+                particiones = psutil.disk_partitions()
+            else:
+                particiones = [p for p in psutil.disk_partitions() if p.device.upper().startswith(letra + ":")]
+
+            for p in particiones:
+                try:
+                    uso = psutil.disk_usage(p.mountpoint)
+                    print(f"🗂️ Disco {p.device} ({p.mountpoint}):")
+                    print(f" - Total: {uso.total / (1024**3):.2f} GB")
+                    print(f" - Usado: {uso.used / (1024**3):.2f} GB")
+                    print(f" - Libre: {uso.free / (1024**3):.2f} GB")
+                    print(f" - Porcentaje usado: {uso.percent}%\n")
+                except PermissionError:
+                    continue
+
+        else:
+            print(f"❓ Tipo de escaneo no reconocido: {tipo}")
+    except Exception as e:
+        print(f"⚠️ Error en escaneo: {e}")
+
+
+
 
 def procesar_emocion_y_puntuacion(texto):
     texto = texto.strip()
@@ -125,12 +171,28 @@ def ejecutar_comando_cmd(comando):
             print("🎙️ Micrófono desbloqueado con éxito.")
             return True
 
+        if comando.startswith("diagnostico:"):
+            tipo = comando[len("diagnostico:"):]  # toma todo lo que sigue a 'diagnostico:'
+            escaner_inteligente(tipo)
+            return True
+
+
         resultado = subprocess.run(comando, shell=True, capture_output=True, text=True)
         if resultado.returncode == 0:
             print("✅ Comando ejecutado con éxito")
             if resultado.stdout.strip():
                 print("Salida:\n", resultado.stdout)
             return True
+
+        if comando.startswith("diagnostico:disco"):
+            partes = comando.split(":")
+            if len(partes) == 3:
+                escaner_inteligente("disco", disco=partes[2])
+            else:
+                escaner_inteligente("disco")
+            return True
+
+
         else:
             print("❌ Error al ejecutar comando")
             if resultado.stderr.strip():
@@ -151,7 +213,9 @@ def enviar_mensaje_final():
     comando = ""
     while intentos < 3:
         try:
-            response = requests.post(SERVER_URL, json={"command": texto_acumulado if intentos == 0 else f"{texto_acumulado} ⚠️ Error en el comando anterior. Reintentalo de nuevo corrigiéndolo."})
+            # Si hay error, le manda ese aviso a la IA para que corrija el comando
+            mensaje_a_enviar = texto_acumulado if intentos == 0 else f"{texto_acumulado} ⚠️ Error en el comando anterior. Reintentalo de nuevo corrigiéndolo."
+            response = requests.post(SERVER_URL, json={"command": mensaje_a_enviar})
             if response.ok:
                 comando = response.json().get("response", "")
                 print(f"🧠 Respuesta del servidor: {comando}")
@@ -210,6 +274,7 @@ def escucha_hotword():
                 audio = r.listen(source, phrase_time_limit=2)
                 texto = r.recognize_google(audio, language="es-AR").lower()
                 print(f"🗣️ Escuchado: {texto}")
+                # Varias formas de hotword para evitar fallos
                 if "okey rey" in texto or "okay rey" in texto or "okey ray" in texto or "okay ray" in texto or "ok ray" in texto or "ok rey" in texto or "okey real" in texto or "okay re" in texto or "ok israel" in texto or "okay israel" in texto or "ok rail" in texto or "okay r" in texto or "okay rail" in texto or "hey ray" in texto or "hey rey" in texto or "hey re" in texto or "hey real" in texto or "hey israel" in texto or "hola rey" in texto:
                     print("🧠 Hola, soy RAI. ¿Cómo puedo ayudarte?")
                     grabar_y_procesar_orden()
