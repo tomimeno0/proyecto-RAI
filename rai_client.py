@@ -10,10 +10,65 @@ import pyautogui
 import psutil
 import re
 import time
+import sqlite3
+import datetime
 
 usuario = os.getlogin()
 texto_acumulado = ""
 SERVER_URL = "http://127.0.0.1:5000/orden"
+DB_PATH = "rai.db"
+
+def abrir_app_desde_db(nombre_app):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT ruta_exe FROM apps WHERE LOWER(nombre) LIKE ?", (f"%{nombre_app.lower()}%",))
+        resultado = cursor.fetchone()
+        conn.close()
+
+        if resultado:
+            ruta = resultado[0]
+            subprocess.Popen(f'start "" "{ruta}"', shell=True)
+
+            # Actualizar la última vez usado
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            ahora = datetime.datetime.now().isoformat()
+            cursor.execute("UPDATE apps SET ultima_vez_abierto = ? WHERE ruta_exe = ?", (ahora, ruta))
+            conn.commit()
+            conn.close()
+
+            print(f"🚀 Abrí la app '{nombre_app}' desde la base de datos.")
+            return True
+        else:
+            print(f"❌ No encontré '{nombre_app}' en la base de datos.")
+            return False
+
+    except Exception as e:
+        print(f"⚠️ Error abriendo app desde DB: {e}")
+        return False
+    
+def cerrar_app_desde_db(nombre_busqueda):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT ruta_exe FROM apps WHERE LOWER(nombre) LIKE ?", (f"%{nombre_busqueda.lower()}%",))
+    resultado = cursor.fetchone()
+    conn.close()
+
+    if not resultado:
+        print(f"❌ No encontré ninguna app llamada '{nombre_busqueda}' en la base de datos.")
+        return False
+
+    ruta_exe = resultado[0]
+    nombre_proceso = os.path.basename(ruta_exe)
+
+    try:
+        subprocess.run(["taskkill", "/f", "/im", nombre_proceso], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"❌ Cerrada la app: {nombre_proceso}")
+        return True
+    except subprocess.CalledProcessError:
+        print(f"⚠️ No se pudo cerrar la app: {nombre_proceso}")
+        return False
 
 def escaner_inteligente(tipo):
     try:
@@ -56,9 +111,6 @@ def escaner_inteligente(tipo):
             print(f"❓ Tipo de escaneo no reconocido: {tipo}")
     except Exception as e:
         print(f"⚠️ Error en escaneo: {e}")
-
-
-
 
 def procesar_emocion_y_puntuacion(texto):
     texto = texto.strip()
@@ -219,7 +271,22 @@ def enviar_mensaje_final():
             if response.ok:
                 comando = response.json().get("response", "")
                 print(f"🧠 Respuesta del servidor: {comando}")
-                exitoso = ejecutar_comando_cmd(comando)
+                
+                if comando.startswith("abrir ") or comando.startswith("iniciar "):
+                    posible_app = comando.replace("abrir", "").replace("iniciar", "").strip()
+                    si_funciona = abrir_app_desde_db(posible_app)
+                    if si_funciona:
+                        exitoso = True  # Marca como éxito y corta el ciclo
+                        break
+                if comando.startswith("cerrar "):
+                    posible_app = comando.replace("cerrar", "").strip()
+                    si_funciona = cerrar_app_desde_db(posible_app)
+                    if si_funciona:
+                        exitoso = True
+                        break
+
+                ejecutar_comandos_en_cadena(comando)
+                exitoso = True  # Si no hubo errores, lo marcamos como exitoso
                 if exitoso:
                     break
                 else:
@@ -282,6 +349,16 @@ def escucha_hotword():
                 continue
             except sr.RequestError as e:
                 print(f"❌ Error con el reconocimiento de voz: {e}")
+
+def ejecutar_comandos_en_cadena(comandos):
+    comandos_lista = [cmd.strip() for cmd in comandos.replace('\n', ';').split(';') if cmd.strip()]
+    for comando in comandos_lista:
+        print(f"🔁 Ejecutando comando encadenado: {comando}")
+        exito = ejecutar_comando_cmd(comando)
+        if not exito:
+            print(f"❌ Error en comando: {comando}. Se detiene la cadena.")
+            break
+
 
 def main():
     threading.Thread(target=escucha_hotword, daemon=True).start()
