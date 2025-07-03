@@ -14,16 +14,13 @@ import pygetwindow as gw
 import pyautogui
 import speech_recognition as sr
 import keyboard
+from consultas_apps import buscar_comando_por_nombre, actualizar_ultima_vez
 
 DB_NAME = "rai.db"
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), DB_NAME)
 SERVER_URL = "http://127.0.0.1:5000/orden"
 usuario = os.getlogin()
 texto_acumulado = ""
-
-# ──────────────────────────────────────────────────────────────────────────────
-# BASE DE DATOS: crear si no existe
-# ──────────────────────────────────────────────────────────────────────────────
 
 def crear_tablas_si_no_existen():
     conn = sqlite3.connect(DB_PATH)
@@ -52,10 +49,6 @@ def crear_tablas_si_no_existen():
 
     conn.commit()
     conn.close()
-
-# ──────────────────────────────────────────────────────────────────────────────
-# APPS: abrir y cerrar desde DB
-# ──────────────────────────────────────────────────────────────────────────────
 
 def abrir_app_desde_db(nombre_app):
     try:
@@ -86,6 +79,35 @@ def abrir_app_desde_db(nombre_app):
         print(f"⚠️ Error abriendo app desde DB: {e}")
         return False
 
+def abrir_app_uwp_desde_db(nombre_app):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT comando_abrir FROM apps_uwp WHERE LOWER(nombre) LIKE ?", (f"%{nombre_app.lower()}%",))
+        resultado = cursor.fetchone()
+        conn.close()
+
+        if resultado and resultado[0]:
+            comando = resultado[0]
+            subprocess.Popen(comando, shell=True)
+
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            ahora = datetime.datetime.now().isoformat()
+            cursor.execute("UPDATE apps_uwp SET ultima_vez_abierto = ? WHERE comando_abrir = ?", (ahora, comando))
+            conn.commit()
+            conn.close()
+
+            print(f"🚀 Abrí la app UWP '{nombre_app}' desde la base de datos.")
+            return True
+        else:
+            print(f"❌ No encontré '{nombre_app}' o no tiene comando válido en apps_uwp.")
+            return False
+
+    except Exception as e:
+        print(f"⚠️ Error abriendo app UWP desde DB: {e}")
+        return False
+
 def cerrar_app_desde_db(nombre_busqueda):
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -108,10 +130,6 @@ def cerrar_app_desde_db(nombre_busqueda):
         print(f"⚠️ No se pudo cerrar la app: {e}")
         return False
 
-# ──────────────────────────────────────────────────────────────────────────────
-# SISTEMA: escaneo, diagnósticos, ventanas
-# ──────────────────────────────────────────────────────────────────────────────
-
 def escaner_inteligente(tipo):
     try:
         if tipo == "ram":
@@ -119,13 +137,11 @@ def escaner_inteligente(tipo):
             print("🧠 Procesos con mayor uso de RAM:")
             for proc in procesos[:10]:
                 print(f" - {proc.info['name']} (PID: {proc.info['pid']}) - {proc.info['memory_info'].rss / (1024*1024):.2f} MB")
-
         elif tipo == "cpu":
             procesos = sorted(psutil.process_iter(['pid', 'name', 'cpu_percent']), key=lambda p: p.info['cpu_percent'], reverse=True)
             print("🔥 Procesos con más uso de CPU:")
             for proc in procesos[:10]:
                 print(f" - {proc.info['name']} (PID: {proc.info['pid']}) - {proc.info['cpu_percent']}%")
-
         elif tipo.startswith("disco"):
             letra = tipo.split(":")[1].upper() if ":" in tipo else "TODOS"
             particiones = psutil.disk_partitions() if letra == "TODOS" else [p for p in psutil.disk_partitions() if p.device.upper().startswith(letra + ":")]
@@ -162,10 +178,6 @@ def listar_ventanas_y_procesos():
     for proc in psutil.process_iter(['name']):
         nombre = proc.info['name']
         if nombre: print(f" - {nombre}")
-
-# ──────────────────────────────────────────────────────────────────────────────
-# VOZ: entrada por micrófono y procesamiento
-# ──────────────────────────────────────────────────────────────────────────────
 
 def procesar_emocion_y_puntuacion(texto):
     texto = texto.strip()
@@ -218,13 +230,18 @@ def escucha_hotword():
             except sr.RequestError as e:
                 print(f"❌ Error con el reconocimiento de voz: {e}")
 
-# ──────────────────────────────────────────────────────────────────────────────
-# EJECUCIÓN DE COMANDOS
-# ──────────────────────────────────────────────────────────────────────────────
-
 def ejecutar_comando_cmd(comando):
     try:
         comando = comando.replace("TuUsuario", usuario)
+        comando = comando.replace("%USERNAME%", usuario)
+
+        # Si el comando es abrir una app UWP con explorer.exe, lo tratamos como éxito
+        if comando.startswith("explorer.exe shell:appsFolder\\"):
+            subprocess.Popen(comando, shell=True)
+            print("✅ Comando UWP ejecutado con Popen (no se espera salida)")
+            return True
+
+        # Comandos especiales del sistema
         if comando.strip().lower() == "listar_ventanas_y_procesos":
             listar_ventanas_y_procesos()
             return True
@@ -244,6 +261,8 @@ def ejecutar_comando_cmd(comando):
         if comando.startswith("diagnostico:"):
             escaner_inteligente(comando)
             return True
+
+        # Comandos CMD normales
         resultado = subprocess.run(comando, shell=True, capture_output=True, text=True)
         if resultado.returncode == 0:
             print("✅ Comando ejecutado con éxito")
@@ -256,6 +275,7 @@ def ejecutar_comando_cmd(comando):
     except Exception as e:
         print(f"⚠️ Error ejecutando comando: {e}")
         return False
+
 
 def ejecutar_comandos_en_cadena(comandos):
     comandos_lista = [cmd.strip() for cmd in comandos.replace('\n', ';').split(';') if cmd.strip()]
@@ -276,13 +296,41 @@ def enviar_mensaje_final():
             mensaje = texto_acumulado if intentos == 0 else f"{texto_acumulado} ⚠️ Error en el comando anterior. Reintentalo."
             response = requests.post(SERVER_URL, json={"command": mensaje})
             if response.ok:
-                comando = response.json().get("response", "")
+                comando = response.json().get("response", "").strip()
                 print(f"🧠 Respuesta del servidor: {comando}")
 
-                if comando.startswith("abrir ") or comando.startswith("iniciar "):
-                    if abrir_app_desde_db(comando.replace("abrir", "").replace("iniciar", "").strip()): break
-                elif comando.startswith("cerrar "):
-                    if cerrar_app_desde_db(comando.replace("cerrar", "").strip()): break
+                nombre_app = None
+                if comando.lower().startswith("abrir "):
+                    nombre_app = comando[6:].strip()
+                elif comando.lower().startswith("iniciar "):
+                    nombre_app = comando[7:].strip()
+
+                if nombre_app:
+                    resultado = buscar_comando_por_nombre(nombre_app)
+                    print(f"DEBUG - resultado buscar_comando_por_nombre: {resultado}")
+                    if not resultado or any(r is None for r in resultado):
+                        print(f"❌ Comando inválido para '{nombre_app}', valores incompletos: {resultado}")
+                        break
+                    nombre, comando_db, tipo = resultado
+                    if tipo == "exe":
+                        comando_final = f'start "" "{comando_db.replace("%USERNAME%", usuario)}"'
+                    elif tipo == "uwp":
+                        comando_final = comando_db
+                    else:
+                        comando_final = "app_no_encontrada"
+
+                    print(f"🔁 Ejecutando comando desde DB: {comando_final}")
+                    if ejecutar_comando_cmd(comando_final):
+                        actualizar_ultima_vez(nombre_app)
+                        break
+                    else:
+                        print(f"❌ Error ejecutando comando de la app '{nombre_app}'")
+                elif comando.lower().startswith("cerrar "):
+                    nombre_cerrar = comando[7:].strip()
+                    if cerrar_app_desde_db(nombre_cerrar):
+                        break
+                    else:
+                        print(f"❌ No se pudo cerrar la app '{nombre_cerrar}'")
                 else:
                     ejecutar_comandos_en_cadena(comando)
                     break
@@ -295,10 +343,6 @@ def enviar_mensaje_final():
         intentos += 1
 
     texto_acumulado = ""
-
-# ──────────────────────────────────────────────────────────────────────────────
-# MAIN
-# ──────────────────────────────────────────────────────────────────────────────
 
 def main():
     crear_tablas_si_no_existen()
