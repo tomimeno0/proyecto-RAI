@@ -53,84 +53,45 @@ def crear_tablas_si_no_existen():
     conn.commit()
     conn.close()
 
-def abrir_app_desde_db(nombre_app):
+def ejecutar_accion_desde_db(nombre_app, tipo_accion):
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        cursor.execute("SELECT ruta_exe FROM apps WHERE LOWER(nombre) LIKE ?", (f"%{nombre_app.lower()}%",))
-        resultado = cursor.fetchone()
+
+        # 1. Buscamos ID de la app
+        cursor.execute("SELECT id FROM Aplicaciones WHERE LOWER(nombre) LIKE ?", (f"%{nombre_app.lower()}%",))
+        app_result = cursor.fetchone()
+
+        if not app_result:
+            logger.warning(f"❌ No encontré la app '{nombre_app}' en la tabla Aplicaciones.")
+            return False
+
+        app_id = app_result[0]
+
+        # 2. Buscamos comando asociado a la acción
+        cursor.execute("""
+            SELECT comando FROM Acciones 
+            WHERE LOWER(accion) = ? AND app_id = ?
+        """, (tipo_accion.lower(), app_id))
+        accion_result = cursor.fetchone()
         conn.close()
 
-        if resultado:
-            ruta = resultado[0]
-            subprocess.Popen(f'start "" "{ruta}"', shell=True)
+        if not accion_result:
+            logger.warning(f"❌ No encontré la acción '{tipo_accion}' para la app '{nombre_app}'.")
+            return False
 
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            ahora = datetime.datetime.now().isoformat()
-            cursor.execute("UPDATE apps SET ultima_vez_abierto = ? WHERE ruta_exe = ?", (ahora, ruta))
-            conn.commit()
-            conn.close()
+        comando = accion_result[0]
 
-            logger.info(f"🚀 Abrí la app '{nombre_app}' desde la base de datos.")
+        # 3. Ejecutamos el comando
+        if ejecutar_comando_cmd(comando):
+            logger.info(f"✅ Acción '{tipo_accion}' ejecutada sobre '{nombre_app}'.")
             return True
         else:
-            logger.warning(f"❌ No encontré '{nombre_app}' en la base de datos.")
+            logger.warning(f"⚠️ Falló el comando de '{tipo_accion}' sobre '{nombre_app}'.")
             return False
 
     except Exception as e:
-        logger.error(f"⚠️ Error abriendo app desde DB: {e}")
-        return False
-
-def abrir_app_uwp_desde_db(nombre_app):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT comando_abrir FROM apps_uwp WHERE LOWER(nombre) LIKE ?", (f"%{nombre_app.lower()}%",))
-        resultado = cursor.fetchone()
-        conn.close()
-
-        if resultado and resultado[0]:
-            comando = resultado[0]
-            subprocess.Popen(comando, shell=True)
-
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            ahora = datetime.datetime.now().isoformat()
-            cursor.execute("UPDATE apps_uwp SET ultima_vez_abierto = ? WHERE comando_abrir = ?", (ahora, comando))
-            conn.commit()
-            conn.close()
-
-            logger.info(f"🚀 Abrí la app UWP '{nombre_app}' desde la base de datos.")
-            return True
-        else:
-            logger.warning(f"❌ No encontré '{nombre_app}' o no tiene comando válido en apps_uwp.")
-            return False
-
-    except Exception as e:
-        logger.error(f"⚠️ Error abriendo app UWP desde DB: {e}")
-        return False
-
-def cerrar_app_desde_db(nombre_busqueda):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT ruta_exe FROM apps WHERE LOWER(nombre) LIKE ?", (f"%{nombre_busqueda.lower()}%",))
-        resultado = cursor.fetchone()
-        conn.close()
-
-        if not resultado:
-            logger.warning(f"❌ No encontré ninguna app llamada '{nombre_busqueda}' en la base de datos.")
-            return False
-
-        ruta_exe = resultado[0]
-        nombre_proceso = os.path.basename(ruta_exe)
-        subprocess.run(["taskkill", "/f", "/im", nombre_proceso], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        logger.info(f"❌ Cerrada la app: {nombre_proceso}")
-        return True
-
-    except Exception as e:
-        logger.error(f"⚠️ No se pudo cerrar la app: {e}")
+        logger.error(f"⚠️ Error ejecutando acción desde DB: {e}")
         return False
 
 def escaner_inteligente(tipo):
@@ -369,7 +330,7 @@ def enviar_mensaje_final(timeout=5):
 
                 elif comando.lower().startswith("cerrar "):
                     nombre_app = comando[7:].strip()
-                    resultado = cerrar_app_desde_db(nombre_app)
+                    resultado = ejecutar_accion_desde_db(nombre_app)
                     if resultado:
                         hud.log(f"✅ ¡Listo! [ {nombre_app} ] fue cerrado.")
                     else:
