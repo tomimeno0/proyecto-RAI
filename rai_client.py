@@ -322,7 +322,7 @@ def enviar_mensaje_final(timeout=5):
     while intentos < 3:
         try:
             mensaje = texto_acumulado if intentos == 0 else f"{texto_acumulado} ⚠️ Error en el comando anterior. Reintentalo."
-            response = requests.post(SERVER_URL, json={"command": mensaje}, timeout=30)
+            response = requests.post(SERVER_URL, json={"command": mensaje}, timeout=timeout)
             if response.ok:
                 comando = response.json().get("response", "").strip()
                 logger.info(f"🧠 Respuesta del servidor: {comando}")
@@ -331,48 +331,57 @@ def enviar_mensaje_final(timeout=5):
                     hud.log("❌ No entendí la orden.")
                     break
 
-                if not any(comando.lower().startswith(prefix) for prefix in [
-                    "abrir ", "cerrar ", "tecla:", "ventana:", "bloquear_", "desbloquear_",
-                    "listar_ventanas_y_procesos", "diagnostico:"
-                ]):
-                    hud.mostrar_respuesta_final(comando)
-                    break
+                if any(comando.lower().startswith(prefix) for prefix in ["abrir ", "iniciar "]):
+                    nombre_app = None
+                    if comando.lower().startswith("abrir "):
+                        nombre_app = comando[6:].strip()
+                    elif comando.lower().startswith("iniciar "):
+                        nombre_app = comando[7:].strip()
 
-                nombre_app = None
-                if comando.lower().startswith("abrir "):
-                    nombre_app = comando[6:].strip()
-                elif comando.lower().startswith("iniciar "):
-                    nombre_app = comando[7:].strip()
+                    if nombre_app:
+                        resultado = buscar_comando_por_nombre(nombre_app)
+                        logger.debug(f"DEBUG - resultado buscar_comando_por_nombre: {resultado}")
+                        if not resultado or any(r is None for r in resultado):
+                            logger.warning(f"❌ Comando inválido para '{nombre_app}', valores incompletos: {resultado}")
+                            break
 
-                if nombre_app:
-                    resultado = buscar_comando_por_nombre(nombre_app)
-                    logger.debug(f"DEBUG - resultado buscar_comando_por_nombre: {resultado}")
-                    if not resultado or any(r is None for r in resultado):
-                        logger.warning(f"❌ Comando inválido para '{nombre_app}', valores incompletos: {resultado}")
-                        break
+                        nombre, comando_db, tipo = resultado
+                        if tipo == "exe":
+                            comando_final = f'start "" "{comando_db.replace("%USERNAME%", usuario)}"'
+                        elif tipo == "uwp":
+                            comando_final = comando_db
+                        else:
+                            comando_final = "app_no_encontrada"
 
-                    nombre, comando_db, tipo = resultado
-                    if tipo == "exe":
-                        comando_final = f'start "" "{comando_db.replace("%USERNAME%", usuario)}"'
-                    elif tipo == "uwp":
-                        comando_final = comando_db
+                        hud.log(f"⚙️ Ejecutando [ {nombre_app} ]...")
+                        logger.info(f"🔁 Ejecutando comando desde DB: {comando_final}")
+                        if ejecutar_comando_cmd(comando_final):
+                            hud.log(f"✅ ¡Listo! [ {nombre_app} ] fue abierto.")
+                            actualizar_ultima_vez(nombre_app)
+                            threading.Timer(2, hud.ocultar).start()
+                            break
+                        else:
+                            hud.log(f"❌ No se pudo abrir [ {nombre_app} ]")
+                            logger.warning(f"❌ No se pudo abrir la app '{nombre_app}'")
+                            break
                     else:
-                        comando_final = "app_no_encontrada"
-
-                    hud.log(f"⚙️ Ejecutando [ {nombre_app} ]...")
-                    logger.info(f"🔁 Ejecutando comando desde DB: {comando_final}")
-                    if ejecutar_comando_cmd(comando_final):
-                        hud.log(f"✅ ¡Listo! [ {nombre_app} ] fue abierto.")
-                        actualizar_ultima_vez(nombre_app)
-                        threading.Timer(2, hud.ocultar).start()
                         break
+
+                elif comando.lower().startswith("cerrar "):
+                    nombre_app = comando[7:].strip()
+                    resultado = cerrar_app_desde_db(nombre_app)
+                    if resultado:
+                        hud.log(f"✅ ¡Listo! [ {nombre_app} ] fue cerrado.")
                     else:
                         hud.log(f"❌ No se pudo cerrar [ {nombre_app} ]")
-                        logger.warning(f"❌ No se pudo cerrar la app '{nombre_app}'")
+                    threading.Timer(2, hud.ocultar).start()
+                    break
+
                 else:
                     ejecutar_comandos_en_cadena(comando)
                     threading.Timer(2, hud.ocultar).start()
                     break
+
             else:
                 logger.error(f"❌ Error en servidor: {response.status_code}")
                 break
@@ -387,8 +396,6 @@ def enviar_mensaje_final(timeout=5):
         intentos += 1
 
     texto_acumulado = ""
-
-# Donde llames a enviar_mensaje_final(), antes detectá el timeout y pásalo así:
 
 def enviar_mensaje_final_automatico():
     timeout = 60 if es_pregunta_larga(texto_acumulado) else 5

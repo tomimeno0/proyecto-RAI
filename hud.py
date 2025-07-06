@@ -130,6 +130,7 @@ def expandir_altura_suave(paso=3, delay=3):
 
 def mostrar(texto=None, es_expansivo=False, after=None, es_bienvenida=False):
     global hud_visible, texto_acumulado
+    hud_visible = False
     if root and not hud_visible:
         hud_visible = True
         texto_acumulado = ""
@@ -171,7 +172,8 @@ def ocultar():
                 if root:
                     root.withdraw()
                     root.geometry(f"{ANCHO}x{ALTO_NORMAL}+{POSICION_ORIGINAL_X}+{POSICION_ORIGINAL_Y}")
-                hud_visible = False  # <- Esto se asegura de ejecutarse
+                hud_visible = False
+                print("HUD ocultado, hud_visible seteado en False")
             else:
                 alpha = i / 10
                 if root:
@@ -179,9 +181,11 @@ def ocultar():
                     root.after(30, lambda: fade_out_paso(i - 1))
         except Exception as e:
             print(f"⚠️ Error en fade_out_paso: {e}")
-            hud_visible = False  # SIEMPRE aseguramos esto
+            hud_visible = False
+            print("HUD ocultado por excepción, hud_visible seteado en False")
 
     fade_out_paso()
+
 
 
 
